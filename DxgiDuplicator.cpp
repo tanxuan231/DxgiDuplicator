@@ -6,6 +6,7 @@
 #include <vector>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <vector>
 
 #pragma comment(lib, "DXGI.lib")
 #pragma comment(lib, "D3D11.lib")
@@ -76,18 +77,20 @@ void saveBitmap(unsigned char* bitmap_data, int rowPitch, int height, const char
 
 class DXGIDupMgr {
 public:    
+    bool InitDevice();
+    bool InitOutput(int monitorIdx);
     bool Init();
-    bool GetFrame(void* destImage, UINT destSize, UINT* rowPitch);
+    bool GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch);
 
-    UINT GetImageHeight() {
+    UINT GetImageHeight(int idx) {
         DXGI_OUTDUPL_DESC desc;
-        outputDup->GetDesc(&desc);
+        outputDupV[idx]->GetDesc(&desc);
         return desc.ModeDesc.Height;
     }
 
-    UINT GetImageWidth() {
+    UINT GetImageWidth(int idx) {
         DXGI_OUTDUPL_DESC desc;
-        outputDup->GetDesc(&desc);
+        outputDupV[idx]->GetDesc(&desc);
         return desc.ModeDesc.Height;
     }
 private:
@@ -96,13 +99,23 @@ private:
 
     IDXGIDevice* dxgiDevice;
     IDXGIAdapter* dxgiAdapter;
-    IDXGIOutput* dxgiOutput;
-    IDXGIOutput1* dxgiOutput1;
-    IDXGIOutputDuplication* outputDup;
-    ID3D11Texture2D* texture2d;
+
+    vector<IDXGIOutput*> dxgiOutputV;
+    vector<IDXGIOutput1*> dxgiOutput1V;
+    vector<IDXGIOutputDuplication*> outputDupV;
+    vector<ID3D11Texture2D*> texture2dV;
 };
 
 bool DXGIDupMgr::Init()
+{
+    bool ret = InitDevice();
+    ret = InitOutput(0);
+    ret = InitOutput(1);
+
+    return ret;
+}
+
+bool DXGIDupMgr::InitDevice()
 {
     // 1.创建D3D设备
     D3D_FEATURE_LEVEL levelUsed = D3D_FEATURE_LEVEL_10_0;
@@ -116,49 +129,59 @@ bool DXGIDupMgr::Init()
         D3D11_SDK_VERSION, &pDevice, &levelUsed, &pDeviceContext);
     if (FAILED(hr)) {
         cout << "failed for D3D11CreateDevice" << endl;
-        return -1;
+        return false;
     }
 
     // 2.创建DXGI设备
     hr = pDevice->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice));
     if (FAILED(hr)) {
         cout << "failed for get IDXGIDevice" << endl;
-        return -1;
+        return false;
     }
 
     // 3.获取DXGI适配器
     hr = dxgiDevice->GetParent(__uuidof(IDXGIAdapter), reinterpret_cast<void**>(&dxgiAdapter));
     if (FAILED(hr)) {
         cout << "failed for get IDXGIAdapter" << endl;
-        return -1;
+        return false;
     }
+}
 
+bool DXGIDupMgr::InitOutput(int monitorIdx)
+{
     // 4.获取DXGI output
-    hr = dxgiAdapter->EnumOutputs(0, &dxgiOutput);
+    IDXGIOutput* dxgiOutput;
+    HRESULT hr = dxgiAdapter->EnumOutputs(monitorIdx, &dxgiOutput);
     if (FAILED(hr)) {
         cout << "failed for get EnumOutputs" << endl;
-        return -1;
+        return false;
     }
+    dxgiOutputV.emplace_back(dxgiOutput);
 
-    // 5.获取DXGI output1    
+    // 5.获取DXGI output1  
+    IDXGIOutput1* dxgiOutput1;
     hr = dxgiOutput->QueryInterface(__uuidof(IDXGIOutput1), reinterpret_cast<void**>(&dxgiOutput1));
     if (FAILED(hr)) {
         cout << "failed for get IDXGIOutput1" << endl;
-        return -1;
+        return false;
     }
+    dxgiOutput1V.emplace_back(dxgiOutput1);
 
     // 6.获取DXGI OutputDuplication    
+    IDXGIOutputDuplication* outputDup;
     hr = dxgiOutput1->DuplicateOutput(pDevice, &outputDup);
     if (FAILED(hr)) {
         cout << "failed for DuplicateOutput" << endl;
         if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE) {
             cout << "DXGI_ERROR_NOT_CURRENTLY_AVAILABLE" << endl;
         }
-        return -1;
+        return false;
     }
+    outputDupV.emplace_back(outputDup);
     cout << "DuplicateOutput success" << endl;
 
-    // 8.1 创建纹理    
+    // 8.1 创建纹理
+    ID3D11Texture2D* texture2d;
     D3D11_TEXTURE2D_DESC texture2dDesc;
 
     DXGI_OUTDUPL_DESC dxgiOutduplDesc;
@@ -180,44 +203,50 @@ bool DXGIDupMgr::Init()
     hr = pDevice->CreateTexture2D(&texture2dDesc, NULL, &texture2d);
     if (FAILED(hr)) {
         cout << "failed for CreateTexture2D" << endl;
-        return -1;
+        return false;
     }
-
+    texture2dV.emplace_back(texture2d);
     cout << "CreateTexture2D success" << endl;
 
     return true;
 }
 
-bool DXGIDupMgr::GetFrame(void* destImage, UINT destSize, UINT* rowPitch)
+bool DXGIDupMgr::GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch)
 {
+    cout << "get frame start" << endl;
     *rowPitch = 0;
 
     // 7. 获取桌面图像
     DXGI_OUTDUPL_FRAME_INFO frameInfo;
     IDXGIResource* idxgiRes;
-    HRESULT hr = outputDup->AcquireNextFrame(500, &frameInfo, &idxgiRes);
+    HRESULT hr = outputDupV[idx]->AcquireNextFrame(500, &frameInfo, &idxgiRes);
     if (FAILED(hr)) {
-        cout << "failed for AcquireNextFrame" << endl;
-        return -1;
-    }
-
-    if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
-        return true;
+        printf("failed for AcquireNextFrame: %x\n", hr);
+        if (hr == DXGI_ERROR_ACCESS_LOST)
+            cout << "DXGI_ERROR_ACCESS_LOST" << endl;
+        if (hr == DXGI_ERROR_INVALID_CALL)
+            cout << "DXGI_ERROR_INVALID_CALL " << endl;
+        if (hr == E_INVALIDARG)
+            cout << "E_INVALIDARG  " << endl;
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
+            cout << "DXGI_ERROR_WAIT_TIMEOUT  " << endl;
+            return true;
+        }
+        return false;
     }
 
     ID3D11Texture2D* desktopTexture2d;
     hr = idxgiRes->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&desktopTexture2d));
     if (FAILED(hr)) {
         cout << "failed for get desktopTexture2d" << endl;
-        return -1;
+        return false;
     }
 
     // 【资源释放】9.1 查询到数据后，释放IDXG资源
     idxgiRes->Release();
-
     // 8. 将桌面图像拷贝出来
     // 8.2 复制纹理(GPU间复制)
-    pDeviceContext->CopyResource(texture2d, desktopTexture2d);
+    pDeviceContext->CopyResource(texture2dV[idx], desktopTexture2d);
 
     // 【资源释放】9.2 拷贝完数据后，释放桌面纹理
     desktopTexture2d->Release();
@@ -225,10 +254,10 @@ bool DXGIDupMgr::GetFrame(void* destImage, UINT destSize, UINT* rowPitch)
     // 8.3 纹理映射(GPU -> CPU)
     D3D11_MAPPED_SUBRESOURCE resource;
     UINT subresource = D3D11CalcSubresource(0, 0, 0);
-    pDeviceContext->Map(texture2d, subresource, D3D11_MAP_READ, 0, &resource);
+    pDeviceContext->Map(texture2dV[idx], subresource, D3D11_MAP_READ, 0, &resource);
 
     DXGI_OUTDUPL_DESC dxgiOutduplDesc;
-    outputDup->GetDesc(&dxgiOutduplDesc);
+    outputDupV[idx]->GetDesc(&dxgiOutduplDesc);
     UINT height = dxgiOutduplDesc.ModeDesc.Height;
     *rowPitch = resource.RowPitch;
 
@@ -237,12 +266,14 @@ bool DXGIDupMgr::GetFrame(void* destImage, UINT destSize, UINT* rowPitch)
     UINT size = height * resource.RowPitch;
     memcpy_s(destImage, destSize, reinterpret_cast<BYTE*>(resource.pData), size);
 
-    pDeviceContext->Unmap(texture2d, subresource);
+    pDeviceContext->Unmap(texture2dV[idx], subresource);
 
     // 【资源释放】9.3 需要释放帧，对应AcquireNextFrame
-    outputDup->ReleaseFrame();
+    outputDupV[idx]->ReleaseFrame();
 
     cout << "get frame success" << endl;
+
+    return true;
 }
 
 int main()
@@ -253,17 +284,20 @@ int main()
     }
     
     BYTE* pBuf = new BYTE[10000000];
-    for (int i = 0; i < 10; i++)
+    int index = 0;
+    for (int i = 0; i < 20; i++)
     {
+        int idx = index % 2;
         UINT rowPitch;
-        cout << "get frame: " << i << endl;
-        if (!dxgiDupMgr.GetFrame(pBuf, 10000000, &rowPitch)) {
+        cout << "get frame: " << i <<" ["<<idx<<"]" << endl;
+        if (!dxgiDupMgr.GetFrame(idx, pBuf, 10000000, &rowPitch)) {
             return 0;
         }
 
         char file_name[MAX_PATH] = {0};
         sprintf_s(file_name, "%d.bmp", i);
-        saveBitmap(pBuf, rowPitch, dxgiDupMgr.GetImageHeight(), file_name);
+        saveBitmap(pBuf, rowPitch, dxgiDupMgr.GetImageHeight(idx), file_name);
+        index++;
     }
     delete pBuf;
 
