@@ -76,11 +76,13 @@ void saveBitmap(unsigned char* bitmap_data, int rowPitch, int height, const char
 }
 
 class DXGIDupMgr {
-public:    
+public:
+    DXGIDupMgr();
+    ~DXGIDupMgr();
     bool InitDevice();
     bool InitOutput(int monitorIdx);
     bool Init();
-    bool GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch);
+    int GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch);
 
     UINT GetImageHeight(int idx) {
         DXGI_OUTDUPL_DESC desc;
@@ -105,6 +107,35 @@ private:
     vector<IDXGIOutputDuplication*> outputDupV;
     vector<ID3D11Texture2D*> texture2dV;
 };
+
+DXGIDupMgr::DXGIDupMgr() : 
+    pDevice(nullptr), pDeviceContext(nullptr), 
+    dxgiDevice(nullptr), dxgiAdapter(nullptr)
+{}
+
+DXGIDupMgr::~DXGIDupMgr()
+{
+    for (auto e : texture2dV) {
+        e->Release();
+    }
+    for (auto e : outputDupV) {
+        e->Release();
+    }
+    for (auto e : dxgiOutput1V) {
+        e->Release();
+    }
+    for (auto e : dxgiOutputV) {
+        e->Release();
+    }
+    if (dxgiAdapter)
+        dxgiAdapter->Release();
+    if (dxgiDevice)
+        dxgiDevice->Release();
+    if (pDevice)
+        pDevice->Release();
+    if (pDeviceContext)
+        pDeviceContext->Release();
+}
 
 bool DXGIDupMgr::Init()
 {
@@ -211,7 +242,7 @@ bool DXGIDupMgr::InitOutput(int monitorIdx)
     return true;
 }
 
-bool DXGIDupMgr::GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch)
+int DXGIDupMgr::GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitch)
 {
     cout << "get frame start" << endl;
     *rowPitch = 0;
@@ -230,16 +261,16 @@ bool DXGIDupMgr::GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitc
             cout << "E_INVALIDARG  " << endl;
         if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
             cout << "DXGI_ERROR_WAIT_TIMEOUT  " << endl;
-            return true;
+            return 1;
         }
-        return false;
+        return -1;
     }
 
     ID3D11Texture2D* desktopTexture2d;
     hr = idxgiRes->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&desktopTexture2d));
     if (FAILED(hr)) {
         cout << "failed for get desktopTexture2d" << endl;
-        return false;
+        return -1;
     }
 
     // 【资源释放】9.1 查询到数据后，释放IDXG资源
@@ -273,7 +304,7 @@ bool DXGIDupMgr::GetFrame(int idx, void* destImage, UINT destSize, UINT* rowPitc
 
     cout << "get frame success" << endl;
 
-    return true;
+    return 0;
 }
 
 int main()
@@ -285,19 +316,23 @@ int main()
     
     BYTE* pBuf = new BYTE[10000000];
     int index = 0;
-    for (int i = 0; i < 20; i++)
+    for (int i = 0; i < 20;)
     {
         int idx = index % 2;
         UINT rowPitch;
         cout << "get frame: " << i <<" ["<<idx<<"]" << endl;
-        if (!dxgiDupMgr.GetFrame(idx, pBuf, 10000000, &rowPitch)) {
+        int ret = dxgiDupMgr.GetFrame(idx, pBuf, 10000000, &rowPitch);
+        if (ret < 0) {
             return 0;
+        } else if (ret > 0) {
+            continue;
         }
 
         char file_name[MAX_PATH] = {0};
         sprintf_s(file_name, "%d.bmp", i);
         saveBitmap(pBuf, rowPitch, dxgiDupMgr.GetImageHeight(idx), file_name);
         index++;
+        i++;
     }
     delete pBuf;
 
