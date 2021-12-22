@@ -176,6 +176,27 @@ bool DXGIDupMgr::InitDevice()
         cout << "failed for get IDXGIAdapter" << endl;
         return false;
     }
+
+    // 3.1 枚举所有显示器
+    for (int i = 0; i < 6; i ++) {
+        IDXGIOutput* dxgiOutput;
+        HRESULT hr = dxgiAdapter->EnumOutputs(i, &dxgiOutput);
+        if (FAILED(hr)) {
+            cout << "failed for get EnumOutputs" << endl;
+            break;
+        }
+        DXGI_OUTPUT_DESC desc;
+        dxgiOutput->GetDesc(&desc);
+        cout << "============ monitor " << i << endl;
+        cout << desc.DeviceName << endl;
+        cout << desc.Rotation << endl;
+        cout << desc.DesktopCoordinates.left << endl;
+        cout << desc.DesktopCoordinates.top << endl;
+        cout << desc.DesktopCoordinates.right << endl;
+        cout << desc.DesktopCoordinates.bottom << endl;
+    }
+
+    return true;
 }
 
 bool DXGIDupMgr::InitOutput(int monitorIdx)
@@ -186,7 +207,7 @@ bool DXGIDupMgr::InitOutput(int monitorIdx)
     if (FAILED(hr)) {
         cout << "failed for get EnumOutputs" << endl;
         return false;
-    }
+    }     
     dxgiOutputV.emplace_back(dxgiOutput);
 
     // 5.获取DXGI output1  
@@ -316,7 +337,7 @@ int main()
     
     BYTE* pBuf = new BYTE[10000000];
     int index = 0;
-    for (int i = 0; i < 20;)
+    for (int i = 0; i < 10;)
     {
         int idx = index % 2;
         UINT rowPitch;
